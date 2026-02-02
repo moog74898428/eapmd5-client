@@ -18,6 +18,7 @@ eapmd5-client -i <interface> -u <username> -p <password>
 | `-u` | `--username` | `EAP_USERNAME` | Username |
 | `-p` | `--password` | `EAP_PASSWORD` | Password |
 | | `--no-logoff` | `EAP_NO_LOGOFF` | Do not send EAPOL-Logoff on exit |
+| | `--mac` | `EAP_MAC` | Override source MAC address (e.g. `00:11:22:33:44:55`) |
 
 Log level is controlled via `RUST_LOG` (default: `info`).
 
