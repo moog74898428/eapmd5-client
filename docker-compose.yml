@@ -1,0 +1,14 @@
+services:
+  eapmd5-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    cap_add:
+      - NET_RAW
+    environment:
+      - EAP_INTERFACE=eth0
+      - EAP_USERNAME=user
+      - EAP_PASSWORD=pass
+      - RUST_LOG=info
+    restart: unless-stopped
