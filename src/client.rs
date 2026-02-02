@@ -25,16 +25,18 @@ pub struct Client {
     password: String,
     state: State,
     authenticator_mac: [u8; 6],
+    no_logoff: bool,
 }
 
 impl Client {
-    pub fn new(socket: RawSocket, username: String, password: String) -> Self {
+    pub fn new(socket: RawSocket, username: String, password: String, no_logoff: bool) -> Self {
         Self {
             socket,
             username,
             password,
             state: State::Idle,
             authenticator_mac: PAE_GROUP_ADDR,
+            no_logoff,
         }
     }
 
@@ -230,6 +232,9 @@ impl Client {
     }
 
     fn send_logoff(&self) {
+        if self.no_logoff {
+            return;
+        }
         if self.state == State::Authenticated {
             info!("Sending EAPOL-Logoff");
             let _ = self.socket.send(&build_eapol_logoff(self.socket.mac()));

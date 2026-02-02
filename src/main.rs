@@ -23,6 +23,10 @@ struct Args {
     /// Password
     #[arg(short, long, env = "EAP_PASSWORD")]
     password: String,
+
+    /// Do not send EAPOL-Logoff on exit
+    #[arg(long, env = "EAP_NO_LOGOFF")]
+    no_logoff: bool,
 }
 
 extern "C" fn handle_signal(_sig: libc::c_int) {
@@ -51,7 +55,7 @@ fn main() -> Result<()> {
     let sock = socket::RawSocket::new(&args.interface)?;
     info!("MAC address: {}", format_mac(sock.mac()));
 
-    let mut client = client::Client::new(sock, args.username, args.password);
+    let mut client = client::Client::new(sock, args.username, args.password, args.no_logoff);
 
     match client.run() {
         Ok(()) => {
