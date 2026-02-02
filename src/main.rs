@@ -27,6 +27,23 @@ struct Args {
     /// Do not send EAPOL-Logoff on exit
     #[arg(long, env = "EAP_NO_LOGOFF")]
     no_logoff: bool,
+
+    /// Override source MAC address (e.g. 00:11:22:33:44:55)
+    #[arg(long, env = "EAP_MAC", value_parser = parse_mac)]
+    mac: Option<[u8; 6]>,
+}
+
+fn parse_mac(s: &str) -> Result<[u8; 6], String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() != 6 {
+        return Err(format!("expected 6 octets separated by ':', got {}", parts.len()));
+    }
+    let mut mac = [0u8; 6];
+    for (i, part) in parts.iter().enumerate() {
+        mac[i] = u8::from_str_radix(part, 16)
+            .map_err(|_| format!("invalid hex octet: '{}'", part))?;
+    }
+    Ok(mac)
 }
 
 extern "C" fn handle_signal(_sig: libc::c_int) {
@@ -52,7 +69,10 @@ fn main() -> Result<()> {
     }
 
     info!("Opening interface {}", args.interface);
-    let sock = socket::RawSocket::new(&args.interface)?;
+    let mut sock = socket::RawSocket::new(&args.interface)?;
+    if let Some(mac) = args.mac {
+        sock.set_mac(mac);
+    }
     info!("MAC address: {}", format_mac(sock.mac()));
 
     let mut client = client::Client::new(sock, args.username, args.password, args.no_logoff);

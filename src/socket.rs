@@ -112,6 +112,10 @@ impl RawSocket {
         &self.mac
     }
 
+    pub fn set_mac(&mut self, mac: [u8; 6]) {
+        self.mac = mac;
+    }
+
     #[allow(dead_code)]
     pub fn ifindex(&self) -> libc::c_int {
         self.ifindex
