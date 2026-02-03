@@ -181,9 +181,10 @@ impl Client {
                     debug!("Ignoring EAP-Success in state {:?}", self.state);
                     return Ok(false);
                 }
-                if self.last_eap_id != Some(eap.id) {
+                // Accept matching ID or ID+1 (some authenticators increment)
+                if !self.is_valid_response_id(eap.id) {
                     debug!(
-                        "Ignoring EAP-Success with mismatched id (expected {:?}, got {})",
+                        "Ignoring EAP-Success with mismatched id (expected {:?} or +1, got {})",
                         self.last_eap_id, eap.id
                     );
                     return Ok(false);
@@ -198,9 +199,10 @@ impl Client {
                     debug!("Ignoring EAP-Failure in state {:?}", self.state);
                     return Ok(false);
                 }
-                if self.last_eap_id != Some(eap.id) {
+                // Accept matching ID or ID+1 (some authenticators increment)
+                if !self.is_valid_response_id(eap.id) {
                     debug!(
-                        "Ignoring EAP-Failure with mismatched id (expected {:?}, got {})",
+                        "Ignoring EAP-Failure with mismatched id (expected {:?} or +1, got {})",
                         self.last_eap_id, eap.id
                     );
                     return Ok(false);
@@ -293,6 +295,14 @@ impl Client {
             }
 
             None => Ok(false),
+        }
+    }
+
+    /// Check if the given EAP ID is valid for a response (matches last_eap_id or last_eap_id+1)
+    fn is_valid_response_id(&self, id: u8) -> bool {
+        match self.last_eap_id {
+            Some(last) => id == last || id == last.wrapping_add(1),
+            None => false,
         }
     }
 
