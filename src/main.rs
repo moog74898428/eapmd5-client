@@ -31,6 +31,10 @@ struct Args {
     /// Override source MAC address (e.g. 00:11:22:33:44:55)
     #[arg(long, env = "EAP_MAC", value_parser = parse_mac)]
     mac: Option<[u8; 6]>,
+
+    /// Wait for reauth instead of exiting on initial auth failure
+    #[arg(long, env = "EAP_WAIT_ON_FAILURE")]
+    wait_on_failure: bool,
 }
 
 fn parse_mac(s: &str) -> Result<[u8; 6], String> {
@@ -75,7 +79,7 @@ fn main() -> Result<()> {
     }
     info!("MAC address: {}", format_mac(sock.mac()));
 
-    let mut client = client::Client::new(sock, args.username, args.password, args.no_logoff);
+    let mut client = client::Client::new(sock, args.username, args.password, args.no_logoff, args.wait_on_failure);
 
     match client.run() {
         Ok(()) => {

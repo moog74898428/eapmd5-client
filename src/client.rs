@@ -24,19 +24,21 @@ pub struct Client {
     username: String,
     password: String,
     state: State,
-    authenticator_mac: [u8; 6],
+    authenticator_mac: Option<[u8; 6]>,
     no_logoff: bool,
+    wait_on_failure: bool,
 }
 
 impl Client {
-    pub fn new(socket: RawSocket, username: String, password: String, no_logoff: bool) -> Self {
+    pub fn new(socket: RawSocket, username: String, password: String, no_logoff: bool, wait_on_failure: bool) -> Self {
         Self {
             socket,
             username,
             password,
             state: State::Idle,
-            authenticator_mac: PAE_GROUP_ADDR,
+            authenticator_mac: None,
             no_logoff,
+            wait_on_failure,
         }
     }
 
@@ -60,6 +62,9 @@ impl Client {
     // -----------------------------------------------------------------------
 
     fn start_auth(&mut self) -> Result<()> {
+        // Reset authenticator MAC for new authentication attempt
+        self.authenticator_mac = None;
+
         for attempt in 1..=MAX_START_RETRIES {
             if !RUNNING.load(Ordering::Relaxed) {
                 return Ok(());
@@ -69,24 +74,36 @@ impl Client {
             self.socket.send(&build_eapol_start(self.socket.mac()))?;
             self.state = State::Starting;
 
-            let mut buf = [0u8; MAX_FRAME_SIZE];
-            match self.socket.recv(&mut buf)? {
-                Some(n) => {
-                    if self.handle_frame(&buf[..n])? {
-                        return Ok(());
+            // Keep receiving until we get a valid response or timeout
+            loop {
+                let mut buf = [0u8; MAX_FRAME_SIZE];
+                match self.socket.recv(&mut buf)? {
+                    Some(n) => {
+                        if self.handle_frame(&buf[..n])? {
+                            return Ok(());
+                        }
+                        // Invalid/echo frame, continue receiving
                     }
-                }
-                None => {
-                    warn!("Timeout waiting for response");
+                    None => {
+                        warn!("Timeout waiting for response");
+                        break;
+                    }
                 }
             }
         }
-        warn!(
-            "No response from authenticator after {} attempts, waiting for reauth",
-            MAX_START_RETRIES
-        );
-        self.state = State::Authenticated;
-        Ok(())
+        if self.wait_on_failure {
+            warn!(
+                "No response from authenticator after {} attempts, waiting for reauth",
+                MAX_START_RETRIES
+            );
+            self.state = State::Authenticated;
+            Ok(())
+        } else {
+            bail!(
+                "No response from authenticator after {} attempts",
+                MAX_START_RETRIES
+            )
+        }
     }
 
     fn wait_for_response(&mut self) -> Result<()> {
@@ -130,8 +147,22 @@ impl Client {
             return Ok(false);
         }
 
-        // Remember the authenticator's MAC for subsequent responses
-        self.authenticator_mac = eapol.src_mac;
+        // Validate or remember the authenticator's MAC
+        match self.authenticator_mac {
+            Some(mac) if mac != eapol.src_mac => {
+                debug!(
+                    "Ignoring frame from unexpected MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                    eapol.src_mac[0], eapol.src_mac[1], eapol.src_mac[2],
+                    eapol.src_mac[3], eapol.src_mac[4], eapol.src_mac[5]
+                );
+                return Ok(false);
+            }
+            None => {
+                // First EAP packet from authenticator - remember their MAC
+                self.authenticator_mac = Some(eapol.src_mac);
+            }
+            _ => {}
+        }
 
         let eap = match EapPacket::parse(&eapol.body) {
             Some(p) => p,
@@ -160,9 +191,10 @@ impl Client {
         match eap.eap_type {
             Some(EAP_TYPE_IDENTITY) => {
                 info!("EAP-Request/Identity (id={})", eap.id);
+                let auth_mac = self.authenticator_mac.unwrap_or(PAE_GROUP_ADDR);
                 let frame = build_eap_response_identity(
                     self.socket.mac(),
-                    &self.authenticator_mac,
+                    &auth_mac,
                     eap.id,
                     self.username.as_bytes(),
                 );
@@ -195,9 +227,10 @@ impl Client {
                 hasher.update(challenge);
                 let hash: [u8; 16] = hasher.finalize().into();
 
+                let auth_mac = self.authenticator_mac.unwrap_or(PAE_GROUP_ADDR);
                 let frame = build_eap_response_md5(
                     self.socket.mac(),
-                    &self.authenticator_mac,
+                    &auth_mac,
                     eap.id,
                     &hash,
                     self.username.as_bytes(),
@@ -219,9 +252,10 @@ impl Client {
                     "Unsupported EAP type {}, sending NAK (desired=MD5)",
                     unsupported
                 );
+                let auth_mac = self.authenticator_mac.unwrap_or(PAE_GROUP_ADDR);
                 let frame = build_eap_response_nak(
                     self.socket.mac(),
-                    &self.authenticator_mac,
+                    &auth_mac,
                     eap.id,
                     EAP_TYPE_MD5,
                 );

@@ -162,11 +162,11 @@ impl EapolFrame {
         let packet_type = raw[15];
         let body_len = u16::from_be_bytes([raw[16], raw[17]]) as usize;
 
-        let body = if body_len > 0 && raw.len() >= 18 + body_len {
-            raw[18..18 + body_len].to_vec()
-        } else {
-            Vec::new()
-        };
+        // Validate body_len against actual frame length
+        if raw.len() < 18 + body_len {
+            return None;
+        }
+        let body = raw[18..18 + body_len].to_vec();
 
         Some(EapolFrame {
             src_mac,

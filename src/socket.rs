@@ -95,14 +95,17 @@ impl RawSocket {
             tv_sec: 5,
             tv_usec: 0,
         };
-        unsafe {
+        let ret = unsafe {
             libc::setsockopt(
                 fd,
                 libc::SOL_SOCKET,
                 libc::SO_RCVTIMEO,
                 &tv as *const libc::timeval as *const libc::c_void,
                 std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-            );
+            )
+        };
+        if ret < 0 {
+            fail!("setsockopt SO_RCVTIMEO: {}", io::Error::last_os_error());
         }
 
         Ok(RawSocket { fd, ifindex, mac })
