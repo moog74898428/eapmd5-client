@@ -47,38 +47,43 @@ docker pull ghcr.io/<owner>/eapmd5-client:latest
 
 To run on MikroTik RouterOS with container support:
 
-1. Pull the image and create a mount for the registry:
+1. Create a veth interface:
 
 ```
-/container/config set registry-url=https://ghcr.io tmpdir=usb1/pull
-/container/add remote-image=<owner>/eapmd5-client:latest interface=veth1 root-dir=usb1/containers/eapmd5 \
-    envlist=eapmd5-env
+/interface veth add name=veth-eapmd5 address=10.88.88.1/24 gateway=10.88.88.254
 ```
 
-2. Create environment variables:
+2. Configure the WAN bridge to forward reserved addresses (required for EAPOL):
 
 ```
-/container/envs
-add name=eapmd5-env key=EAP_INTERFACE value=veth1
-add name=eapmd5-env key=EAP_USERNAME value=your_username
-add name=eapmd5-env key=EAP_PASSWORD value=your_password
-add name=eapmd5-env key=EAP_MAC value=00:11:22:33:44:55
+/interface bridge set bridge1 protocol-mode=none forward-reserved-addresses=yes
+/interface bridge port add bridge=bridge1 interface=veth-eapmd5
 ```
 
-3. Create a veth interface and bridge it to WAN:
+3. Create environment variables:
 
 ```
-/interface/veth add name=veth1 address=192.168.100.2/24 gateway=192.168.100.1
-/interface/bridge/port add bridge=bridge-wan interface=veth1
+/container envs
+add list=eapmd5 key=EAP_INTERFACE value=veth-eapmd5
+add list=eapmd5 key=EAP_MAC value=AA:BB:CC:DD:EE:FF
+add list=eapmd5 key=EAP_USERNAME value=YOUR_USERNAME
+add list=eapmd5 key=EAP_PASSWORD value=YOUR_PASSWORD
+add list=eapmd5 key=EAP_NO_LOGOFF value=true
 ```
 
-4. Start the container:
+4. Create and start the container:
 
 ```
-/container/start 0
+/container add name=eapmd5-client \
+    interface=veth-eapmd5 \
+    remote-image=ghcr.io/<owner>/eapmd5-client:latest \
+    root-dir=/usb1/containers/eapmd5 \
+    envlist=eapmd5 \
+    start-on-boot=yes \
+    logging=yes
 ```
 
-Note: Set `EAP_MAC` to match the MAC address of your WAN interface for ISPs that bind authentication to MAC.
+Note: Set `EAP_MAC` to match the MAC address of your WAN interface for ISPs that bind authentication to MAC. The `forward-reserved-addresses=yes` setting is required to pass EAPOL frames (destination `01:80:C2:00:00:03`) through the bridge.
 
 ## License
 
