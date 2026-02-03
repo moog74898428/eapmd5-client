@@ -207,3 +207,185 @@ impl EapPacket {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_eapol_frame(src_mac: &[u8; 6], packet_type: u8, body: &[u8]) -> Vec<u8> {
+        let mut frame = vec![0u8; 60];
+        // dst mac (PAE group)
+        frame[0..6].copy_from_slice(&PAE_GROUP_ADDR);
+        // src mac
+        frame[6..12].copy_from_slice(src_mac);
+        // ethertype
+        frame[12..14].copy_from_slice(&ETH_P_PAE.to_be_bytes());
+        // EAPOL version
+        frame[14] = EAPOL_VERSION;
+        // EAPOL packet type
+        frame[15] = packet_type;
+        // EAPOL body length
+        frame[16..18].copy_from_slice(&(body.len() as u16).to_be_bytes());
+        // body
+        frame[18..18 + body.len()].copy_from_slice(body);
+        frame
+    }
+
+    fn make_eap_packet(code: u8, id: u8, eap_type: Option<u8>, data: &[u8]) -> Vec<u8> {
+        let has_type = eap_type.is_some();
+        let length = 4 + if has_type { 1 + data.len() } else { 0 };
+        let mut pkt = Vec::with_capacity(length);
+        pkt.push(code);
+        pkt.push(id);
+        pkt.extend_from_slice(&(length as u16).to_be_bytes());
+        if let Some(t) = eap_type {
+            pkt.push(t);
+            pkt.extend_from_slice(data);
+        }
+        pkt
+    }
+
+    #[test]
+    fn test_eapol_frame_parse_valid() {
+        let src = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let body = [1, 2, 3, 4];
+        let frame = make_eapol_frame(&src, EAPOL_EAP_PACKET, &body);
+
+        let parsed = EapolFrame::parse(&frame).unwrap();
+        assert_eq!(parsed.src_mac, src);
+        assert_eq!(parsed.packet_type, EAPOL_EAP_PACKET);
+        assert_eq!(parsed.body, body);
+    }
+
+    #[test]
+    fn test_eapol_frame_parse_too_short() {
+        let frame = vec![0u8; 17]; // need at least 18
+        assert!(EapolFrame::parse(&frame).is_none());
+    }
+
+    #[test]
+    fn test_eapol_frame_parse_wrong_ethertype() {
+        let mut frame = make_eapol_frame(&[0; 6], EAPOL_EAP_PACKET, &[]);
+        frame[12] = 0x08;
+        frame[13] = 0x00; // IPv4
+        assert!(EapolFrame::parse(&frame).is_none());
+    }
+
+    #[test]
+    fn test_eapol_frame_parse_body_len_mismatch() {
+        let src = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let mut frame = make_eapol_frame(&src, EAPOL_EAP_PACKET, &[1, 2]);
+        // Claim body is 50 bytes but frame is only 60 total (18 header + 42 max body)
+        frame[16] = 0;
+        frame[17] = 50;
+        // Should fail because 18 + 50 > 60
+        assert!(EapolFrame::parse(&frame).is_none());
+    }
+
+    #[test]
+    fn test_eap_packet_parse_request_identity() {
+        let pkt = make_eap_packet(EAP_REQUEST, 42, Some(EAP_TYPE_IDENTITY), &[]);
+        let parsed = EapPacket::parse(&pkt).unwrap();
+        assert_eq!(parsed.code, EAP_REQUEST);
+        assert_eq!(parsed.id, 42);
+        assert_eq!(parsed.eap_type, Some(EAP_TYPE_IDENTITY));
+        assert!(parsed.data.is_empty());
+    }
+
+    #[test]
+    fn test_eap_packet_parse_md5_challenge() {
+        let challenge = [0x11u8; 16];
+        let mut data = vec![16u8]; // value size
+        data.extend_from_slice(&challenge);
+        let pkt = make_eap_packet(EAP_REQUEST, 5, Some(EAP_TYPE_MD5), &data);
+        let parsed = EapPacket::parse(&pkt).unwrap();
+        assert_eq!(parsed.code, EAP_REQUEST);
+        assert_eq!(parsed.id, 5);
+        assert_eq!(parsed.eap_type, Some(EAP_TYPE_MD5));
+        assert_eq!(parsed.data.len(), 17); // value_size + challenge
+    }
+
+    #[test]
+    fn test_eap_packet_parse_success() {
+        let pkt = make_eap_packet(EAP_SUCCESS, 10, None, &[]);
+        let parsed = EapPacket::parse(&pkt).unwrap();
+        assert_eq!(parsed.code, EAP_SUCCESS);
+        assert_eq!(parsed.id, 10);
+        assert_eq!(parsed.eap_type, None);
+    }
+
+    #[test]
+    fn test_eap_packet_parse_failure() {
+        let pkt = make_eap_packet(EAP_FAILURE, 10, None, &[]);
+        let parsed = EapPacket::parse(&pkt).unwrap();
+        assert_eq!(parsed.code, EAP_FAILURE);
+        assert_eq!(parsed.id, 10);
+        assert_eq!(parsed.eap_type, None);
+    }
+
+    #[test]
+    fn test_eap_packet_parse_too_short() {
+        let pkt = vec![1, 2, 3]; // need at least 4
+        assert!(EapPacket::parse(&pkt).is_none());
+    }
+
+    #[test]
+    fn test_eap_packet_parse_length_mismatch() {
+        let mut pkt = make_eap_packet(EAP_REQUEST, 1, Some(EAP_TYPE_IDENTITY), &[]);
+        // Claim length is 100 but actual data is shorter
+        pkt[2] = 0;
+        pkt[3] = 100;
+        assert!(EapPacket::parse(&pkt).is_none());
+    }
+
+    #[test]
+    fn test_build_eapol_start() {
+        let src = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let frame = build_eapol_start(&src);
+        assert_eq!(frame.len(), 60); // minimum ethernet frame
+        let parsed = EapolFrame::parse(&frame).unwrap();
+        assert_eq!(parsed.src_mac, src);
+        assert_eq!(parsed.packet_type, EAPOL_START);
+        assert!(parsed.body.is_empty());
+    }
+
+    #[test]
+    fn test_build_eapol_logoff() {
+        let src = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let frame = build_eapol_logoff(&src);
+        let parsed = EapolFrame::parse(&frame).unwrap();
+        assert_eq!(parsed.packet_type, EAPOL_LOGOFF);
+    }
+
+    #[test]
+    fn test_build_eap_response_identity() {
+        let src = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let dst = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let frame = build_eap_response_identity(&src, &dst, 42, b"testuser");
+        let eapol = EapolFrame::parse(&frame).unwrap();
+        assert_eq!(eapol.packet_type, EAPOL_EAP_PACKET);
+        let eap = EapPacket::parse(&eapol.body).unwrap();
+        assert_eq!(eap.code, EAP_RESPONSE);
+        assert_eq!(eap.id, 42);
+        assert_eq!(eap.eap_type, Some(EAP_TYPE_IDENTITY));
+        assert_eq!(&eap.data, b"testuser");
+    }
+
+    #[test]
+    fn test_build_eap_response_md5() {
+        let src = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let dst = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff];
+        let hash = [0xab; 16];
+        let frame = build_eap_response_md5(&src, &dst, 5, &hash, b"user");
+        let eapol = EapolFrame::parse(&frame).unwrap();
+        let eap = EapPacket::parse(&eapol.body).unwrap();
+        assert_eq!(eap.code, EAP_RESPONSE);
+        assert_eq!(eap.id, 5);
+        assert_eq!(eap.eap_type, Some(EAP_TYPE_MD5));
+        // data = value_size(1) + hash(16) + username(4)
+        assert_eq!(eap.data.len(), 1 + 16 + 4);
+        assert_eq!(eap.data[0], 16); // value size
+        assert_eq!(&eap.data[1..17], &hash);
+        assert_eq!(&eap.data[17..], b"user");
+    }
+}

@@ -10,13 +10,14 @@ use crate::RUNNING;
 const MAX_START_RETRIES: u32 = 10;
 const MAX_FRAME_SIZE: usize = 1514;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum State {
     Idle,
     Starting,
     Identity,
     Challenging,
     Authenticated,
+    WaitingReauth,
 }
 
 pub struct Client {
@@ -25,6 +26,7 @@ pub struct Client {
     password: String,
     state: State,
     authenticator_mac: Option<[u8; 6]>,
+    last_eap_id: Option<u8>,
     no_logoff: bool,
     wait_on_failure: bool,
 }
@@ -37,6 +39,7 @@ impl Client {
             password,
             state: State::Idle,
             authenticator_mac: None,
+            last_eap_id: None,
             no_logoff,
             wait_on_failure,
         }
@@ -51,7 +54,7 @@ impl Client {
 
             match self.state {
                 State::Idle => self.start_auth()?,
-                State::Authenticated => self.wait_for_reauth()?,
+                State::Authenticated | State::WaitingReauth => self.wait_for_reauth()?,
                 _ => self.wait_for_response()?,
             }
         }
@@ -62,8 +65,9 @@ impl Client {
     // -----------------------------------------------------------------------
 
     fn start_auth(&mut self) -> Result<()> {
-        // Reset authenticator MAC for new authentication attempt
+        // Reset state for new authentication attempt
         self.authenticator_mac = None;
+        self.last_eap_id = None;
 
         for attempt in 1..=MAX_START_RETRIES {
             if !RUNNING.load(Ordering::Relaxed) {
@@ -96,7 +100,7 @@ impl Client {
                 "No response from authenticator after {} attempts, waiting for reauth",
                 MAX_START_RETRIES
             );
-            self.state = State::Authenticated;
+            self.state = State::WaitingReauth;
             Ok(())
         } else {
             bail!(
@@ -172,11 +176,35 @@ impl Client {
         match eap.code {
             EAP_REQUEST => self.handle_request(&eap),
             EAP_SUCCESS => {
+                // Only accept Success in Challenging state with matching EAP ID
+                if self.state != State::Challenging {
+                    debug!("Ignoring EAP-Success in state {:?}", self.state);
+                    return Ok(false);
+                }
+                if self.last_eap_id != Some(eap.id) {
+                    debug!(
+                        "Ignoring EAP-Success with mismatched id (expected {:?}, got {})",
+                        self.last_eap_id, eap.id
+                    );
+                    return Ok(false);
+                }
                 info!("EAP-Success (id={})", eap.id);
                 self.state = State::Authenticated;
                 Ok(true)
             }
             EAP_FAILURE => {
+                // Only accept Failure in Challenging state with matching EAP ID
+                if self.state != State::Challenging {
+                    debug!("Ignoring EAP-Failure in state {:?}", self.state);
+                    return Ok(false);
+                }
+                if self.last_eap_id != Some(eap.id) {
+                    debug!(
+                        "Ignoring EAP-Failure with mismatched id (expected {:?}, got {})",
+                        self.last_eap_id, eap.id
+                    );
+                    return Ok(false);
+                }
                 error!("EAP-Failure (id={})", eap.id);
                 bail!("Authentication rejected by authenticator");
             }
@@ -237,6 +265,7 @@ impl Client {
                 );
                 self.socket.send(&frame)?;
                 info!("Sent EAP-Response/MD5-Challenge");
+                self.last_eap_id = Some(eap.id);
                 self.state = State::Challenging;
                 Ok(true)
             }
