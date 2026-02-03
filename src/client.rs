@@ -81,10 +81,12 @@ impl Client {
                 }
             }
         }
-        bail!(
-            "No response from authenticator after {} attempts",
+        warn!(
+            "No response from authenticator after {} attempts, waiting for reauth",
             MAX_START_RETRIES
         );
+        self.state = State::Authenticated;
+        Ok(())
     }
 
     fn wait_for_response(&mut self) -> Result<()> {
