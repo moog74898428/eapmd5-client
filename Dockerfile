@@ -21,7 +21,7 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then \
     fi
 
 # ------- runtime image -------
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12
 
 COPY --from=builder /eapmd5-client /eapmd5-client
 
