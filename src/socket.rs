@@ -47,7 +47,7 @@ impl RawSocket {
         }
 
         // ---- get interface index ------------------------------------------
-        if unsafe { libc::ioctl(fd, libc::SIOCGIFINDEX as libc::c_ulong, &mut ifr) } < 0 {
+        if unsafe { libc::ioctl(fd, libc::SIOCGIFINDEX as libc::Ioctl, &mut ifr) } < 0 {
             fail!(
                 "ioctl SIOCGIFINDEX on '{}': {}",
                 interface,
@@ -58,7 +58,7 @@ impl RawSocket {
             unsafe { *(&ifr.ifr_ifru as *const _ as *const libc::c_int) };
 
         // ---- get hardware (MAC) address -----------------------------------
-        if unsafe { libc::ioctl(fd, libc::SIOCGIFHWADDR as libc::c_ulong, &mut ifr) } < 0 {
+        if unsafe { libc::ioctl(fd, libc::SIOCGIFHWADDR as libc::Ioctl, &mut ifr) } < 0 {
             fail!(
                 "ioctl SIOCGIFHWADDR on '{}': {}",
                 interface,
