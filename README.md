@@ -60,7 +60,15 @@ To run on MikroTik RouterOS with container support:
 /interface bridge port add bridge=bridge1 interface=veth-eapmd5
 ```
 
-3. Create environment variables:
+3. Add bridge filter rules to block unwanted traffic from the container:
+
+```
+/interface bridge filter
+add chain=forward in-interface=veth-eapmd5 mac-protocol=0x888e action=accept comment="Allow EAPOL from container"
+add chain=forward in-interface=veth-eapmd5 action=drop comment="Drop all other traffic from container"
+```
+
+4. Create environment variables:
 
 ```
 /container envs
@@ -71,7 +79,7 @@ add list=eapmd5 key=EAP_PASSWORD value=YOUR_PASSWORD
 add list=eapmd5 key=EAP_NO_LOGOFF value=true
 ```
 
-4. Create and start the container:
+5. Create and start the container:
 
 ```
 /container add name=eapmd5-client \
